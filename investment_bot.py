@@ -521,6 +521,28 @@ class InvestmentBot:
         await update.message.reply_text(welcome_text, reply_markup=Keyboards.main_menu())
 
     # ===================================================================
+    # BACK TO MENU - FIXED: Works from any state
+    # ===================================================================
+    async def back_to_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+
+        user = self.user_manager.get_user(update.effective_user.id)
+
+        welcome_text = (
+            f"Main Menu\n"
+            f"-------------------------\n\n"
+            f"Balance: {Config.CURRENCY}{user['balance']:,.2f}\n"
+            f"Total Invested: {Config.CURRENCY}{user['total_invested']:,.2f}\n"
+            f"Total Earned: {Config.CURRENCY}{user['total_earned']:,.2f}\n"
+            f"Total Withdrawn: {Config.CURRENCY}{user['total_withdrawn']:,.2f}\n\n"
+            f"What would you like to do?"
+        )
+
+        await query.edit_message_text(welcome_text, reply_markup=Keyboards.main_menu())
+        return ConversationHandler.END
+
+    # ===================================================================
     # INVESTMENT FLOW
     # ===================================================================
     async def invest_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -886,27 +908,6 @@ class InvestmentBot:
         await query.edit_message_text(text, reply_markup=Keyboards.back_menu())
 
     # ===================================================================
-    # BACK TO MENU
-    # ===================================================================
-    async def back_to_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
-
-        user = self.user_manager.get_user(update.effective_user.id)
-
-        welcome_text = (
-            f"Main Menu\n"
-            f"-------------------------\n\n"
-            f"Balance: {Config.CURRENCY}{user['balance']:,.2f}\n"
-            f"Total Invested: {Config.CURRENCY}{user['total_invested']:,.2f}\n"
-            f"Total Earned: {Config.CURRENCY}{user['total_earned']:,.2f}\n"
-            f"Total Withdrawn: {Config.CURRENCY}{user['total_withdrawn']:,.2f}\n\n"
-            f"What would you like to do?"
-        )
-
-        await query.edit_message_text(welcome_text, reply_markup=Keyboards.main_menu())
-
-    # ===================================================================
     # ADMIN PANEL
     # ===================================================================
     async def admin_panel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1044,52 +1045,83 @@ def main():
         BotCommand("admin", "Admin panel")
     ]
 
-    # Conversation handler for investment
+    # ===================================================================
+    # FIXED: Conversation handlers with back button in EVERY state
+    # ===================================================================
+
+    # Investment conversation handler
     invest_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(bot.invest_callback, pattern="^invest$")],
         states={
-            SELECTING_PLAN: [CallbackQueryHandler(bot.plan_selected, pattern="^plan_")],
-            ENTERING_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.amount_entered)],
+            SELECTING_PLAN: [
+                CallbackQueryHandler(bot.plan_selected, pattern="^plan_"),
+                # FIXED: Back button handler in this state
+                CallbackQueryHandler(bot.back_to_menu, pattern="^back_menu$")
+            ],
+            ENTERING_AMOUNT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, bot.amount_entered),
+                # FIXED: Back button handler in this state
+                CallbackQueryHandler(bot.back_to_menu, pattern="^back_menu$")
+            ],
             CONFIRMING_INVESTMENT: [
                 CallbackQueryHandler(bot.confirm_investment, pattern="^confirm_invest$"),
-                CallbackQueryHandler(bot.cancel_investment, pattern="^cancel_invest$")
+                CallbackQueryHandler(bot.cancel_investment, pattern="^cancel_invest$"),
+                # FIXED: Back button handler in this state
+                CallbackQueryHandler(bot.back_to_menu, pattern="^back_menu$")
             ]
         },
-        fallbacks=[CallbackQueryHandler(bot.back_to_menu, pattern="^back_menu$")]
+        fallbacks=[
+            CallbackQueryHandler(bot.back_to_menu, pattern="^back_menu$"),
+            CommandHandler("start", bot.start)
+        ],
+        per_message=True  # FIXED: Track callbacks per message
     )
 
-    # Conversation handler for withdrawal
+    # Withdrawal conversation handler
     withdraw_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(bot.withdraw_start, pattern="^withdraw$")],
         states={
             ENTERING_WITHDRAW_AMOUNT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, bot.withdraw_amount_entered)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, bot.withdraw_amount_entered),
+                # FIXED: Back button handler in this state
+                CallbackQueryHandler(bot.back_to_menu, pattern="^back_menu$")
             ]
         },
-        fallbacks=[CallbackQueryHandler(bot.back_to_menu, pattern="^back_menu$")]
+        fallbacks=[
+            CallbackQueryHandler(bot.back_to_menu, pattern="^back_menu$"),
+            CommandHandler("start", bot.start)
+        ],
+        per_message=True  # FIXED: Track callbacks per message
     )
 
-    # Add handlers
+    # ===================================================================
+    # GLOBAL HANDLERS (Outside conversation - always active)
+    # ===================================================================
+
     application.add_handler(CommandHandler("start", bot.start))
     application.add_handler(CommandHandler("help", bot.help_menu))
     application.add_handler(CommandHandler("admin", bot.admin_panel))
     application.add_handler(CommandHandler("broadcast", bot.broadcast_message))
 
+    # Add conversation handlers
     application.add_handler(invest_conv)
     application.add_handler(withdraw_conv)
 
+    # Global callback handlers (must be AFTER conversation handlers)
     application.add_handler(CallbackQueryHandler(bot.portfolio, pattern="^portfolio$"))
     application.add_handler(CallbackQueryHandler(bot.referral, pattern="^referral$"))
     application.add_handler(CallbackQueryHandler(bot.support, pattern="^support$"))
     application.add_handler(CallbackQueryHandler(bot.help_menu, pattern="^help_menu$"))
     application.add_handler(CallbackQueryHandler(bot.stats, pattern="^stats$"))
-    application.add_handler(CallbackQueryHandler(bot.back_to_menu, pattern="^back_menu$"))
 
     # Admin callbacks
     application.add_handler(CallbackQueryHandler(bot.admin_stats, pattern="^admin_stats$"))
     application.add_handler(CallbackQueryHandler(bot.admin_users, pattern="^admin_users$"))
     application.add_handler(CallbackQueryHandler(bot.admin_withdrawals, pattern="^admin_withdrawals$"))
     application.add_handler(CallbackQueryHandler(bot.admin_broadcast, pattern="^admin_broadcast$"))
+
+    # Global back button (catch-all for any remaining back clicks)
+    application.add_handler(CallbackQueryHandler(bot.back_to_menu, pattern="^back_menu$"))
 
     # Start bot
     print("=" * 60)
